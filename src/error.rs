@@ -8,6 +8,8 @@ use crate::models::ErrorResponse;
 /// with automatic HTTP status code mapping via the IntoResponse implementation.
 #[derive(thiserror::Error, Debug)]
 pub enum ServiceError {
+    #[error("Validation error: {0}")]
+    ValidationError(String),
     #[error("User with this username or email already exists")]
     DuplicateUser,
     #[error("User not found")]
@@ -25,6 +27,7 @@ pub enum ServiceError {
 impl IntoResponse for ServiceError {
     fn into_response(self) -> axum::response::Response {
         let (status, error_message) = match self {
+            ServiceError::ValidationError(msg) => create_error(StatusCode::BAD_REQUEST, msg),
             ServiceError::DuplicateUser => create_error(StatusCode::CONFLICT, self.to_string()),
             ServiceError::NotFound => create_error(StatusCode::NOT_FOUND, self.to_string()),
             ServiceError::Unauthorized => create_error(StatusCode::UNAUTHORIZED, self.to_string()),
