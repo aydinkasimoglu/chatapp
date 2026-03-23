@@ -4,7 +4,7 @@ use jsonwebtoken::{EncodingKey, Header, encode};
 
 use crate::error::ServiceError;
 use crate::models::{AuthRequest, AuthResponse, Claims};
-use crate::repositories::user_repository::UserRepository;
+use crate::repositories::user::UserRepository;
 
 /// Service for handling user authentication and JWT token operations.
 ///

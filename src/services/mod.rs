@@ -3,5 +3,6 @@
 //! Provides high-level operations for authentication and user management
 //! by wrapping repository operations with business logic.
 
-pub mod auth_service;
-pub mod user_service;
+pub mod auth;
+pub mod user;
+pub mod server;

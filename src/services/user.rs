@@ -1,7 +1,7 @@
 use crate::{
     error::ServiceError,
     models::{CreateUser, UpdatePassword, UpdateUser, User},
-    repositories::user_repository::UserRepository,
+    repositories::user::UserRepository,
 };
 
 use uuid::Uuid;
@@ -31,7 +31,7 @@ impl UserService {
     ///
     /// # Returns
     /// The created user on success, or a `ServiceError` (e.g., `DuplicateUser` if username/email exists)
-    pub async fn create_user(&self, payload: CreateUser) -> Result<User, ServiceError> {
+    pub async fn create(&self, payload: CreateUser) -> Result<User, ServiceError> {
         self.repository
             .create(&payload)
             .await
@@ -45,7 +45,7 @@ impl UserService {
     ///
     /// # Returns
     /// The user on success, or `NotFound` error if user doesn't exist
-    pub async fn get_user_by_id(&self, user_id: Uuid) -> Result<User, ServiceError> {
+    pub async fn find_by_id(&self, user_id: Uuid) -> Result<User, ServiceError> {
         self.repository
             .find_by_id(user_id)
             .await?
@@ -56,7 +56,7 @@ impl UserService {
     ///
     /// # Returns
     /// A vector of all users
-    pub async fn get_all_users(&self) -> Result<Vec<User>, ServiceError> {
+    pub async fn find_all(&self) -> Result<Vec<User>, ServiceError> {
         Ok(self.repository.find_all().await?)
     }
 
@@ -70,7 +70,7 @@ impl UserService {
     ///
     /// # Returns
     /// The updated user on success, or `NotFound` error if user doesn't exist
-    pub async fn update_user(
+    pub async fn update(
         &self,
         user_id: Uuid,
         payload: UpdateUser,
@@ -106,8 +106,8 @@ impl UserService {
     }
 
     /// Soft-deletes the user by setting `is_active = FALSE`.
-    pub async fn deactivate_user(&self, user_id: Uuid) -> Result<(), ServiceError> {
-        match self.repository.delete(user_id).await? {
+    pub async fn deactivate(&self, user_id: Uuid) -> Result<(), ServiceError> {
+        match self.repository.deactivate(user_id).await? {
             true => Ok(()),
             false => Err(ServiceError::NotFound),
         }
