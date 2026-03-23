@@ -219,7 +219,7 @@ impl UserRepository {
     ///
     /// # Returns
     /// true if the operation is successful, false otherwise
-    pub async fn delete(&self, user_id: Uuid) -> Result<bool, sqlx::Error> {
+    pub async fn deactivate(&self, user_id: Uuid) -> Result<bool, sqlx::Error> {
         let result = sqlx::query!(
             r#"
             UPDATE users
