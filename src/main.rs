@@ -15,8 +15,8 @@ use std::{collections::HashMap, net::SocketAddr, sync::Arc};
 use tokio::{net::TcpListener, sync::Mutex};
 
 use crate::{
-    repositories::user_repository::UserRepository,
-    services::{auth_service::AuthService, user_service::UserService},
+    repositories::{server::ServerRepository, user::UserRepository},
+    services::{auth::AuthService, server::ServerService, user::UserService},
     state::AppState,
 };
 
@@ -51,30 +51,33 @@ async fn main() {
         .await
         .expect("Failed to connect to Postgres");
 
-    let user_repository = UserRepository::new(pool);
+    let user_repository = UserRepository::new(pool.clone());
 
     // Initialize State
     let shared_state = AppState {
         auth_service: AuthService::new(user_repository.clone(), jwt_secret),
         user_service: UserService::new(user_repository),
+        server_service: ServerService::new(ServerRepository::new(pool)),
         rooms: Arc::new(Mutex::new(HashMap::new())),
     };
 
     let app = Router::new()
-        .route("/ws/{room_name}", get(handlers::room_handler))
-        .route("/users", get(handlers::get_users_handler))
+        .route("/ws/{room_name}", get(handlers::websocket::room_handler))
+        .route("/users", get(handlers::users::get_users_handler))
         .route(
             "/users/{user_id}",
-            get(handlers::get_user_by_id_handler)
-                .put(handlers::update_user_handler)
-                .delete(handlers::deactivate_user_handler),
+            get(handlers::users::get_user_by_id_handler)
+                .put(handlers::users::update_user_handler)
+                .delete(handlers::users::deactivate_user_handler),
         )
         .route(
             "/users/{user_id}/password",
-            put(handlers::update_password_handler),
+            put(handlers::users::update_password_handler),
         )
-        .route("/login", post(handlers::login_handler))
-        .route("/signup", post(handlers::signup_handler))
+        .route("/login", post(handlers::auth::login_handler))
+        .route("/signup", post(handlers::auth::signup_handler))
+        .route("/servers", post(handlers::servers::create_server_handler))
+        .route("/servers/public", get(handlers::servers::get_public_servers_handler))
         .with_state(shared_state);
 
     let addr = SocketAddr::from(([127, 0, 0, 1], 3000));

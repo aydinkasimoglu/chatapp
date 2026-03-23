@@ -1,4 +1,4 @@
-use crate::{error::ServiceError, services::auth_service::AuthService};
+use crate::{error::ServiceError, services::auth::AuthService};
 use axum::{
     extract::{FromRef, FromRequestParts},
     http::request::Parts,
