@@ -78,6 +78,13 @@ async fn main() {
         .route("/signup", post(handlers::auth::signup_handler))
         .route("/servers", post(handlers::servers::create_server_handler))
         .route("/servers/public", get(handlers::servers::get_public_servers_handler))
+        .route("/servers/mine", get(handlers::servers::get_my_servers_handler))
+        .route(
+            "/servers/{server_id}",
+            get(handlers::servers::get_server_handler)
+                .put(handlers::servers::update_server_handler)
+                .delete(handlers::servers::delete_server_handler),
+        )
         .with_state(shared_state);
 
     let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
