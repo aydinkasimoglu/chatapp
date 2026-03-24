@@ -17,7 +17,8 @@ impl ServerRepository {
         Self { pool }
     }
 
-    /// Creates a new server owned by the specified user.
+    /// Creates a new server owned by the specified user and automatically
+    /// adds the owner to `server_members` with role `'owner'`.
     ///
     /// # Arguments
     /// * `user_id` - UUID of the server owner
@@ -27,7 +28,9 @@ impl ServerRepository {
         user_id: Uuid,
         payload: &CreateServer,
     ) -> Result<Server, sqlx::Error> {
-        sqlx::query_as!(
+        let mut tx = self.pool.begin().await?;
+
+        let server = sqlx::query_as!(
             Server,
             r#"
             INSERT INTO servers (owner_id, name, description, is_public)
@@ -46,8 +49,22 @@ impl ServerRepository {
             payload.description,
             payload.is_public.unwrap_or(true)
         )
-        .fetch_one(&self.pool)
-        .await
+        .fetch_one(&mut *tx)
+        .await?;
+
+        sqlx::query!(
+            r#"
+            INSERT INTO server_members (user_id, server_id, role)
+            VALUES ($1, $2, 'owner')
+            "#,
+            user_id,
+            server.server_id,
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        tx.commit().await?;
+        Ok(server)
     }
 
     /// Retrieves a server by its ID.
