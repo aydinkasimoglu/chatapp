@@ -7,84 +7,119 @@ use uuid::Uuid;
 // CORE DATABASE MODELS
 // =============================================================
 
-/// Represents a full user row as returned from the database.
 #[derive(Debug, Clone, FromRow)]
 pub struct User {
-    pub user_id:       Uuid,
-    pub username:      String,
-    pub email:         String,
+    pub user_id: Uuid,
+    pub username: String,
+    pub email: String,
     pub password_hash: String,
-    pub created_at:    DateTime<Utc>,
-    pub updated_at:    DateTime<Utc>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, FromRow)]
 pub struct Server {
-    pub server_id:   Uuid,
-    pub owner_id:    Uuid,
-    pub name:        String,
-    pub description: Option<String>,  // nullable in DB
-    pub is_public:   bool,
-    pub created_at:  DateTime<Utc>,
-    pub updated_at:  DateTime<Utc>,
+    pub server_id: Uuid,
+    pub owner_id: Uuid,
+    pub name: String,
+    pub description: Option<String>,
+    pub is_public: bool,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, FromRow)]
 pub struct ServerMember {
-    pub user_id:   Uuid,
+    pub user_id: Uuid,
     pub server_id: Uuid,
-    pub nickname:  Option<String>,    // nullable in DB
-    pub role:      MemberRole,
+    pub nickname: Option<String>,
+    pub role: MemberRole,
     pub joined_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, FromRow)]
+pub struct Friendship {
+    pub friendship_id: Uuid,
+    pub requester_id: Uuid,
+    pub addressee_id: Uuid,
+    pub status: FriendshipStatus,
+    pub responded_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, FromRow)]
+pub struct FriendRecord {
+    pub friendship_id: Uuid,
+    pub user_id: Uuid,
+    pub username: String,
+    pub email: String,
+    pub friends_since: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, FromRow)]
+pub struct UserBlock {
+    pub block_id:   Uuid,
+    pub blocker_id: Uuid,
+    pub blocked_id: Uuid,
+    pub created_at: DateTime<Utc>,
+}
+
+/// Join query result for listing a user's blocked users (includes profile data).
+#[derive(Debug, Clone, FromRow)]
+pub struct BlockRecord {
+    pub block_id:  Uuid,
+    pub user_id:   Uuid,
+    pub username:  String,
+    pub email:     String,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, FromRow)]
+pub struct PendingFriendRequestRecord {
+    pub friendship_id: Uuid,
+    pub user_id: Uuid,
+    pub username: String,
+    pub email: String,
+    pub status: FriendshipStatus,
+    pub created_at: DateTime<Utc>,
 }
 
 // =============================================================
 // REQUEST MODELS (incoming API payloads)
 // =============================================================
 
-/// Payload for creating a new user.
-///
-/// The `password` field is plain-text here — the repository
-/// is responsible for hashing it before persisting.
 #[derive(Debug, Deserialize)]
 pub struct CreateUser {
     pub username: String,
-    pub email:    String,
+    pub email: String,
     pub password: String,
 }
 
-/// Payload for partially updating a user's profile.
-///
-/// All fields are optional — only `Some(value)` fields are applied.
-/// Password changes must go through `UpdatePassword` instead.
 #[derive(Debug, Deserialize)]
 pub struct UpdateUser {
     pub username: Option<String>,
-    pub email:    Option<String>,
+    pub email: Option<String>,
 }
 
-/// Payload for changing a user's password.
-///
-/// Requires the current password for verification before
-/// the repository accepts the new one.
 #[derive(Debug, Deserialize)]
 pub struct UpdatePassword {
     pub current_password: String,
-    pub new_password:     String,
+    pub new_password: String,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct CreateServer {
-    pub name:        String,
+    pub name: String,
     pub description: Option<String>,
-    pub is_public:   Option<bool>,    // defaults to TRUE in DB
+    pub is_public: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct UpdateServer {
-    pub name:        Option<String>,
+    pub name: Option<String>,
     pub description: Option<String>,
-    pub is_public:   Option<bool>,
+    pub is_public: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -95,28 +130,52 @@ pub struct JoinServer {
 #[derive(Debug, Deserialize)]
 pub struct UpdateMember {
     pub nickname: Option<String>,
-    pub role:     Option<MemberRole>,
+    pub role: Option<MemberRole>,
 }
 
-/// Request payload for user authentication.
 #[derive(Debug, Deserialize)]
 pub struct AuthRequest {
     pub email: String,
     pub password: String,
 }
 
+#[derive(Debug, Deserialize)]
+/// Payload for sending a friend request.
+pub struct FriendRequestPayload {
+    pub addressee_id: Uuid,
+}
+
 // =============================================================
 // RESPONSE MODELS (outgoing API shapes)
 // =============================================================
 
-/// Safe public representation of a user for API responses.
-///
-/// Intentionally omits `password_hash` and `is_active`.
+/// API response returned when a user is blocked.
+#[derive(Debug, Serialize)]
+pub struct BlockResponse {
+    pub block_id:          Uuid,
+    pub blocked_user_id:   Uuid,
+    pub blocked_username:  String,
+    pub blocked_email:     String,
+    pub created_at:        DateTime<Utc>,
+}
+
+impl From<BlockRecord> for BlockResponse {
+    fn from(record: BlockRecord) -> Self {
+        Self {
+            block_id:         record.block_id,
+            blocked_user_id:  record.user_id,
+            blocked_username: record.username,
+            blocked_email:    record.email,
+            created_at:       record.created_at,
+        }
+    }
+}
+
 #[derive(Debug, Serialize)]
 pub struct UserResponse {
-    pub user_id:    Uuid,
-    pub username:   String,
-    pub email:      String,
+    pub user_id: Uuid,
+    pub username: String,
+    pub email: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -124,9 +183,9 @@ pub struct UserResponse {
 impl From<User> for UserResponse {
     fn from(user: User) -> Self {
         Self {
-            user_id:    user.user_id,
-            username:   user.username,
-            email:      user.email,
+            user_id: user.user_id,
+            username: user.username,
+            email: user.email,
             created_at: user.created_at,
             updated_at: user.updated_at,
         }
@@ -135,79 +194,147 @@ impl From<User> for UserResponse {
 
 #[derive(Debug, Serialize)]
 pub struct ServerResponse {
-    pub server_id:   Uuid,
-    pub owner_id:    Uuid,
-    pub name:        String,
+    pub server_id: Uuid,
+    pub owner_id: Uuid,
+    pub name: String,
     pub description: Option<String>,
-    pub is_public:   bool,
-    pub created_at:  DateTime<Utc>,
-    pub updated_at:  DateTime<Utc>,
+    pub is_public: bool,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
 }
 
 impl From<Server> for ServerResponse {
     fn from(server: Server) -> Self {
         Self {
-            server_id:   server.server_id,
-            owner_id:    server.owner_id,
-            name:        server.name,
+            server_id: server.server_id,
+            owner_id: server.owner_id,
+            name: server.name,
             description: server.description,
-            is_public:   server.is_public,
-            created_at:  server.created_at,
-            updated_at:  server.updated_at,
+            is_public: server.is_public,
+            created_at: server.created_at,
+            updated_at: server.updated_at,
         }
     }
 }
 
 #[derive(Debug, Serialize)]
 pub struct ServerMemberResponse {
-    pub user_id:   Uuid,
+    pub user_id: Uuid,
     pub server_id: Uuid,
-    pub nickname:  Option<String>,
-    pub role:      MemberRole,
+    pub nickname: Option<String>,
+    pub role: MemberRole,
     pub joined_at: DateTime<Utc>,
 }
 
 impl From<ServerMember> for ServerMemberResponse {
     fn from(member: ServerMember) -> Self {
         Self {
-            user_id:   member.user_id,
+            user_id: member.user_id,
             server_id: member.server_id,
-            nickname:  member.nickname,
-            role:      member.role,
+            nickname: member.nickname,
+            role: member.role,
             joined_at: member.joined_at,
         }
     }
 }
 
-/// Response containing a JWT token for authenticated requests.
+#[derive(Debug, Serialize)]
+pub struct FriendshipResponse {
+    pub friendship_id: Uuid,
+    pub requester_id: Uuid,
+    pub addressee_id: Uuid,
+    pub status: FriendshipStatus,
+    pub responded_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+impl From<Friendship> for FriendshipResponse {
+    fn from(friendship: Friendship) -> Self {
+        Self {
+            friendship_id: friendship.friendship_id,
+            requester_id: friendship.requester_id,
+            addressee_id: friendship.addressee_id,
+            status: friendship.status,
+            responded_at: friendship.responded_at,
+            created_at: friendship.created_at,
+            updated_at: friendship.updated_at,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct FriendResponse {
+    pub friendship_id: Uuid,
+    pub user_id: Uuid,
+    pub username: String,
+    pub email: String,
+    pub friends_since: DateTime<Utc>,
+}
+
+impl From<FriendRecord> for FriendResponse {
+    fn from(record: FriendRecord) -> Self {
+        Self {
+            friendship_id: record.friendship_id,
+            user_id: record.user_id,
+            username: record.username,
+            email: record.email,
+            friends_since: record.friends_since,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct PendingFriendRequestResponse {
+    pub friendship_id: Uuid,
+    pub user_id: Uuid,
+    pub username: String,
+    pub email: String,
+    pub status: FriendshipStatus,
+    pub created_at: DateTime<Utc>,
+}
+
+impl From<PendingFriendRequestRecord> for PendingFriendRequestResponse {
+    fn from(record: PendingFriendRequestRecord) -> Self {
+        Self {
+            friendship_id: record.friendship_id,
+            user_id: record.user_id,
+            username: record.username,
+            email: record.email,
+            status: record.status,
+            created_at: record.created_at,
+        }
+    }
+}
+
 #[derive(Debug, Serialize)]
 pub struct AuthResponse {
     pub token: String,
 }
 
-/// Standard error response format.
 #[derive(Debug, Serialize)]
 pub struct ErrorResponse {
     pub error: String,
 }
 
-/// JWT claims contained within a token.
-/// 
-/// `sub` is the subject (user ID) and `exp` is the expiration time as a Unix timestamp.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Claims {
-    pub sub: String, // Subject (User ID)
-    pub exp: usize,  // Expiration time
+    pub sub: String,
+    pub exp: usize,
 }
 
 // =============================================================
 // ENUM
 // =============================================================
 
-/// Maps to the `member_role` PostgreSQL ENUM type.
-///
-/// The `sqlx::Type` derive handles encoding/decoding automatically.
-/// The `rename_all` attribute matches the lowercase DB enum values.
+#[derive(Debug, Clone, Serialize, Deserialize, Type, PartialEq, Eq)]
+#[sqlx(type_name = "friendship_status", rename_all = "lowercase")]
+pub enum FriendshipStatus {
+    Pending,
+    Accepted,
+    Rejected,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Type, PartialEq)]
 #[sqlx(type_name = "member_role", rename_all = "lowercase")]
 pub enum MemberRole {

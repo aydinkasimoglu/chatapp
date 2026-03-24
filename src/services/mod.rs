@@ -4,5 +4,7 @@
 //! by wrapping repository operations with business logic.
 
 pub mod auth;
-pub mod user;
+pub mod blocks;
+pub mod friendship;
 pub mod server;
+pub mod user;

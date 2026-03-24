@@ -3,14 +3,17 @@ use std::{collections::HashMap, sync::Arc};
 use tokio::sync::{Mutex, broadcast};
 
 use crate::services::{
-    auth::AuthService, server::ServerService, user::UserService,
+    auth::AuthService, blocks::BlockService, friendship::FriendshipService,
+    server::ServerService, user::UserService,
 };
 
 #[derive(Clone)]
 pub struct AppState {
-    pub auth_service: AuthService,
-    pub user_service: UserService,
-    pub server_service: ServerService,
+    pub auth_service:       AuthService,
+    pub user_service:       UserService,
+    pub server_service:     ServerService,
+    pub friendship_service: FriendshipService,
+    pub block_service:      BlockService,
     pub rooms: Arc<Mutex<HashMap<String, broadcast::Sender<String>>>>,
 }
 
