@@ -4,7 +4,7 @@ use tokio::sync::{Mutex, broadcast};
 
 use crate::services::{
     auth::AuthService, blocks::BlockService, friendship::FriendshipService,
-    server::ServerService, user::UserService,
+    presence::PresenceService, server::ServerService, user::UserService,
 };
 
 #[derive(Clone)]
@@ -14,6 +14,7 @@ pub struct AppState {
     pub server_service:     ServerService,
     pub friendship_service: FriendshipService,
     pub block_service:      BlockService,
+    pub presence_service:   PresenceService,
     pub rooms: Arc<Mutex<HashMap<String, broadcast::Sender<String>>>>,
 }
 

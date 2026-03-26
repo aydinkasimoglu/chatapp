@@ -8,6 +8,7 @@ use axum::{
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/", get(handlers::friendships::get_friends_handler))
+        .route("/online", get(handlers::friendships::get_online_friends_handler))
         .route(
             "/{friendship_id}",
             delete(handlers::friendships::remove_friend_handler),

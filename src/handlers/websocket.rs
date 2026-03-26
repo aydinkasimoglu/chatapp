@@ -1,24 +1,69 @@
-use crate::{error::ServiceError, extractors::AuthenticatedUser, state::AppState};
+use crate::{
+    error::ServiceError,
+    extractors::AuthenticatedUser,
+    models::ClientWsMessage,
+    services::presence::PresenceService,
+    state::AppState,
+};
 
 use axum::extract::{Path, State, WebSocketUpgrade};
 
 use axum::extract::ws::Message;
 use futures::{sink::SinkExt, stream::StreamExt};
 use tokio::sync::broadcast;
+use uuid::Uuid;
+
+/// Dedicated WebSocket handler for user presence.
+///
+/// The client connects here once on app open, independent of any chat room.
+/// - On connect:    a session row is inserted; the DB generates the session UUID.
+/// - On heartbeat:  the client sends `{"type":"heartbeat","status":"online"|"idle"}`.
+/// - On disconnect: the session row is deleted.
+///
+/// Route: `GET /ws/presence`
+pub async fn presence_handler(
+    ws: WebSocketUpgrade,
+    State(state): State<AppState>,
+    AuthenticatedUser { user_id }: AuthenticatedUser,
+) -> Result<axum::response::Response, ServiceError> {
+    // Insert the session row
+    let session_id = state.presence_service.connect(user_id).await?;
+    let presence = state.presence_service.clone();
+
+    Ok(ws.on_upgrade(move |socket| handle_presence_socket(socket, session_id, presence)))
+}
+
+/// Drives the presence WebSocket: processes heartbeats and cleans up on disconnect.
+async fn handle_presence_socket(
+    socket: axum::extract::ws::WebSocket,
+    session_id: Uuid,
+    presence: PresenceService,
+) {
+    let (mut _tx, mut rx) = socket.split();
+
+    while let Some(Ok(msg)) = rx.next().await {
+        match msg {
+            Message::Text(text) => {
+                if let Ok(ClientWsMessage::Heartbeat { status }) =
+                    serde_json::from_str::<ClientWsMessage>(&text)
+                {
+                    let _ = presence.heartbeat(session_id, &status).await;
+                }
+            }
+            Message::Close(_) => break,
+            _ => {}
+        }
+    }
+
+    let _ = presence.disconnect(session_id).await;
+}
 
 /// Handles WebSocket connections for chat rooms.
 ///
-/// Establishes a WebSocket connection for a specific chat room, enabling
-/// real-time message broadcasting between all connected clients in that room.
-/// Creates a new room if it doesn't exist.
+/// Purely responsible for room-based message broadcasting.
+/// Presence is tracked separately via the `/ws/presence` endpoint.
 ///
-/// # Arguments
-/// * `ws` - WebSocket upgrade request
-/// * `room_name` - Name of the chat room to connect to
-/// * `state` - Application state containing rooms HashMap
-///
-/// # Returns
-/// WebSocket response for the upgrade
+/// Route: `GET /ws/{room_name}`
 pub async fn room_handler(
     ws: WebSocketUpgrade,
     Path(room_name): Path<String>,
@@ -44,60 +89,51 @@ pub async fn room_handler(
 
     // Create a receiver for this specific user
     let rx = tx.subscribe();
-
-    Ok(ws.on_upgrade(move |socket| handle_socket(socket, tx, rx, user.username)))
+    Ok(ws.on_upgrade(move |socket| handle_room_socket(socket, tx, rx, user.username)))
 }
 
-/// Handles individual WebSocket socket connections within a room.
-///
-/// Manages bidirectional communication for a single client:
-/// - Receives messages from the client and broadcasts them to the room
-/// - Receives broadcasted room messages and sends them to the client
-/// Runs message sender and receiver tasks concurrently using tokio::select.
-///
-/// # Arguments
-/// * `socket` - The WebSocket connection
-/// * `room_tx` - Broadcast sender for the room
-/// * `room_rx` - Broadcast receiver for the room
-async fn handle_socket(
+/// Drives a chat room WebSocket: broadcasts chat messages to all room members.
+async fn handle_room_socket(
     socket: axum::extract::ws::WebSocket,
     room_tx: broadcast::Sender<String>,
     mut room_rx: broadcast::Receiver<String>,
     username: String,
 ) {
-    // Split the socket into sender and receiver
     let (mut user_tx, mut user_rx) = socket.split();
 
-    // --- WRITER TASK ---
+    // --- WRITER TASK: forward room broadcasts to this client ---
     let mut send_task = tokio::spawn(async move {
-        // room_rx.recv() gets messages that ANYONE sent to this room
         while let Ok(message) = room_rx.recv().await {
-            // Send the broadcasted message down to this specific user's WebSocket
             if user_tx.send(Message::Text(message.into())).await.is_err() {
-                // If sending fails (e.g., client disconnected), break the loop
                 break;
             }
         }
     });
 
-    // --- READER TASK ---
+    // --- READER TASK: receive messages from this client and broadcast ---
     let mut recv_task = tokio::spawn(async move {
         while let Some(Ok(msg)) = user_rx.next().await {
-            if let Message::Text(text) = msg {
-                let message = format!("{}: {}", username, text);
-                let _ = room_tx.send(message);
-            } else if let Message::Close(_) = msg {
-                println!("Client initiated close.");
-                break;
+            match msg {
+                Message::Text(text) => {
+                    // Accept both plain text and {"type":"message","content":"..."}
+                    let content = serde_json::from_str::<ClientWsMessage>(&text)
+                        .ok()
+                        .and_then(|m| match m {
+                            ClientWsMessage::Message { content } => Some(content),
+                            _ => None,
+                        })
+                        .unwrap_or_else(|| text.to_string());
+
+                    let _ = room_tx.send(format!("{}: {}", username, content));
+                }
+                Message::Close(_) => break,
+                _ => {}
             }
         }
     });
 
-    // --- TEARDOWN ---
     tokio::select! {
         _ = (&mut send_task) => recv_task.abort(),
         _ = (&mut recv_task) => send_task.abort(),
     };
-
-    println!("Client disconnected and tasks cleaned up.");
 }

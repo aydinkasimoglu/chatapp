@@ -343,3 +343,67 @@ pub enum MemberRole {
     Moderator,
     Member,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, Type, PartialEq)]
+#[sqlx(type_name = "presence_status", rename_all = "lowercase")]
+pub enum PresenceStatus {
+    Online,
+    Idle,
+}
+
+// =============================================================
+// PRESENCE
+// =============================================================
+
+/// DB row for a single active WebSocket session.
+#[derive(Debug, Clone, FromRow)]
+pub struct UserPresence {
+    pub session_id: Uuid,
+    pub user_id: Uuid,
+    pub status: PresenceStatus,
+    pub last_heartbeat_at: DateTime<Utc>,
+    pub connected_at: DateTime<Utc>,
+}
+
+/// Query result for the "online friends" aggregation.
+/// `status` is 'online' if any session reports online, otherwise 'idle'.
+#[derive(Debug, Clone, FromRow)]
+pub struct OnlineFriendRecord {
+    pub user_id: Uuid,
+    pub username: String,
+    pub status: PresenceStatus,
+    pub last_heartbeat_at: DateTime<Utc>,
+}
+
+/// API response shape for an online/idle friend.
+#[derive(Debug, Serialize)]
+pub struct OnlineFriendResponse {
+    pub user_id: Uuid,
+    pub username: String,
+    pub status: PresenceStatus,
+    pub last_heartbeat_at: DateTime<Utc>,
+}
+
+impl From<OnlineFriendRecord> for OnlineFriendResponse {
+    fn from(r: OnlineFriendRecord) -> Self {
+        Self {
+            user_id: r.user_id,
+            username: r.username,
+            status: r.status,
+            last_heartbeat_at: r.last_heartbeat_at,
+        }
+    }
+}
+
+/// Incoming JSON message from a WebSocket client.
+///
+/// Clients must send one of these shapes:
+/// - `{"type":"heartbeat","status":"online"}`
+/// - `{"type":"heartbeat","status":"idle"}`
+/// - `{"type":"message","content":"Hello!"}`
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ClientWsMessage {
+    Heartbeat { status: String },
+    Message { content: String },
+}

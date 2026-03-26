@@ -14,12 +14,12 @@ use tokio::{net::TcpListener, sync::Mutex};
 
 use crate::{
     repositories::{
-        blocks::BlockRepository, friendship::FriendshipRepository, server::ServerRepository,
-        user::UserRepository,
+        blocks::BlockRepository, friendship::FriendshipRepository, presence::PresenceRepository,
+        server::ServerRepository, user::UserRepository,
     },
     services::{
         auth::AuthService, blocks::BlockService, friendship::FriendshipService,
-        server::ServerService, user::UserService,
+        presence::PresenceService, server::ServerService, user::UserService,
     },
     state::AppState,
 };
@@ -67,6 +67,7 @@ async fn main() {
     let user_repository = UserRepository::new(pool.clone());
     let server_repository = ServerRepository::new(pool.clone());
     let friendship_repository = FriendshipRepository::new(pool.clone());
+    let presence_repository = PresenceRepository::new(pool.clone());
     let block_repository = BlockRepository::new(pool);
 
     let shared_state = AppState {
@@ -79,8 +80,22 @@ async fn main() {
             block_repository.clone(),
         ),
         block_service: BlockService::new(block_repository, friendship_repository, user_repository),
+        presence_service: PresenceService::new(presence_repository.clone()),
         rooms: Arc::new(Mutex::new(HashMap::new())),
     };
+
+    // Background task: evict stale presence sessions every 30 seconds.
+    // This handles clients that crash without sending a clean disconnect.
+    let cleanup_presence = PresenceService::new(presence_repository);
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
+        loop {
+            interval.tick().await;
+            if let Err(e) = cleanup_presence.cleanup_stale().await {
+                eprintln!("Presence cleanup error: {:?}", e);
+            }
+        }
+    });
 
     let app = Router::new()
         .merge(routes::auth::router())

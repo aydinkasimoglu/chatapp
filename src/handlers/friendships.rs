@@ -9,7 +9,8 @@ use crate::{
     error::ServiceError,
     extractors::AuthenticatedUser,
     models::{
-        FriendRequestPayload, FriendResponse, FriendshipResponse, PendingFriendRequestResponse,
+        FriendRequestPayload, FriendResponse, FriendshipResponse, OnlineFriendResponse,
+        PendingFriendRequestResponse,
     },
     state::AppState,
 };
@@ -125,4 +126,16 @@ pub async fn remove_friend_handler(
         .await?;
 
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// Returns the authenticated user's friends who are currently online or idle.
+///
+/// A friend is considered online/idle if they have at least one active WebSocket
+/// session with a heartbeat within the last 60 seconds.
+pub async fn get_online_friends_handler(
+    State(state): State<AppState>,
+    AuthenticatedUser { user_id }: AuthenticatedUser,
+) -> Result<Json<Vec<OnlineFriendResponse>>, ServiceError> {
+    let friends = state.presence_service.online_friends(user_id).await?;
+    Ok(Json(friends))
 }
