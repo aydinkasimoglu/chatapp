@@ -30,15 +30,16 @@ impl BlockRepository {
         blocker_id: Uuid,
         blocked_id: Uuid,
     ) -> Result<UserBlock, sqlx::Error> {
-        sqlx::query_as::<_, UserBlock>(
+        sqlx::query_as!(
+            UserBlock,
             r#"
             INSERT INTO user_blocks (blocker_id, blocked_id)
             VALUES ($1, $2)
             RETURNING block_id, blocker_id, blocked_id, created_at
             "#,
+            blocker_id,
+            blocked_id,
         )
-        .bind(blocker_id)
-        .bind(blocked_id)
         .fetch_one(&self.pool)
         .await
     }
@@ -51,15 +52,16 @@ impl BlockRepository {
         blocker_id: Uuid,
         blocked_id: Uuid,
     ) -> Result<Option<UserBlock>, sqlx::Error> {
-        sqlx::query_as::<_, UserBlock>(
+        sqlx::query_as!(
+            UserBlock,
             r#"
             SELECT block_id, blocker_id, blocked_id, created_at
             FROM user_blocks
             WHERE blocker_id = $1 AND blocked_id = $2
             "#,
+            blocker_id,
+            blocked_id
         )
-        .bind(blocker_id)
-        .bind(blocked_id)
         .fetch_optional(&self.pool)
         .await
     }
@@ -69,18 +71,18 @@ impl BlockRepository {
     /// This is used to gate social actions (such as sending friend requests)
     /// whenever a block exists in either direction.
     pub async fn exists_between(&self, user_a: Uuid, user_b: Uuid) -> Result<bool, sqlx::Error> {
-        let exists = sqlx::query_scalar::<_, bool>(
+        let exists = sqlx::query_scalar!(
             r#"
             SELECT EXISTS (
                 SELECT 1
                 FROM user_blocks
                 WHERE (blocker_id = $1 AND blocked_id = $2)
                    OR (blocker_id = $2 AND blocked_id = $1)
-            )
+            ) as "exists!"
             "#,
+            user_a,
+            user_b,
         )
-        .bind(user_a)
-        .bind(user_b)
         .fetch_one(&self.pool)
         .await?;
 
@@ -92,9 +94,11 @@ impl BlockRepository {
     /// Returns `true` if a row was deleted, `false` if no matching block was found.
     pub async fn delete(&self, blocker_id: Uuid, blocked_id: Uuid) -> Result<bool, sqlx::Error> {
         let result =
-            sqlx::query("DELETE FROM user_blocks WHERE blocker_id = $1 AND blocked_id = $2")
-                .bind(blocker_id)
-                .bind(blocked_id)
+            sqlx::query!(
+                "DELETE FROM user_blocks WHERE blocker_id = $1 AND blocked_id = $2",
+                blocker_id,
+                blocked_id
+            )
                 .execute(&self.pool)
                 .await?;
         Ok(result.rows_affected() > 0)
@@ -104,7 +108,8 @@ impl BlockRepository {
     ///
     /// Deactivated users are excluded. Results are ordered newest-first.
     pub async fn list_blocked_by(&self, blocker_id: Uuid) -> Result<Vec<BlockRecord>, sqlx::Error> {
-        sqlx::query_as::<_, BlockRecord>(
+        sqlx::query_as!(
+            BlockRecord,
             r#"
             SELECT
                 ub.block_id,
@@ -118,8 +123,8 @@ impl BlockRepository {
               AND u.is_active = TRUE
             ORDER BY ub.created_at DESC
             "#,
+            blocker_id,
         )
-        .bind(blocker_id)
         .fetch_all(&self.pool)
         .await
     }

@@ -47,7 +47,7 @@ impl ServerRepository {
             user_id,
             payload.name,
             payload.description,
-            payload.is_public.unwrap_or(true)
+            payload.is_public.unwrap_or(false)
         )
         .fetch_one(&mut *tx)
         .await?;
