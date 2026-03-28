@@ -52,12 +52,16 @@ impl UserService {
             .ok_or(ServiceError::NotFound)
     }
 
-    /// Retrieves all users from the database.
+    /// Retrieves a page of users.
+    ///
+    /// # Arguments
+    /// * `limit`  - Maximum number of users to return (caller should cap this)
+    /// * `offset` - Number of users to skip
     ///
     /// # Returns
-    /// A vector of all users
-    pub async fn find_all(&self) -> Result<Vec<User>, ServiceError> {
-        Ok(self.repository.find_all().await?)
+    /// A vector of users for the requested page
+    pub async fn find_paginated(&self, limit: i64, offset: i64) -> Result<Vec<User>, ServiceError> {
+        Ok(self.repository.find_paginated(limit, offset).await?)
     }
 
     /// Updates a user's information.

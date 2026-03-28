@@ -1,12 +1,13 @@
 use crate::{
     error::ServiceError,
-    models::{UpdatePassword, UpdateUser, UserResponse},
+    extractors::AuthenticatedUser,
+    models::{PaginatedResponse, UpdatePassword, UpdateUser, UserListQuery, UserResponse},
     state::AppState,
 };
 
 use axum::{
     Json,
-    extract::{Path, State, rejection::PathRejection},
+    extract::{Path, Query, State, rejection::PathRejection},
     http::StatusCode,
 };
 use uuid::Uuid;
@@ -67,20 +68,27 @@ pub async fn update_password_handler(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// Retrieves all users from the database.
+/// Retrieves a paginated list of users.
 ///
-/// Fetches a list of all registered users.
-///
-/// # Arguments
-/// * `state` - Application state containing user service
-///
-/// # Returns
-/// A vector of all users
+/// Accepts optional `limit` (default 50, max 100) and `offset` (default 0)
+/// query parameters.
 pub async fn get_users_handler(
     State(state): State<AppState>,
-) -> Result<Json<Vec<UserResponse>>, ServiceError> {
-    let users = state.user_service.find_all().await?;
-    Ok(Json(users.into_iter().map(UserResponse::from).collect()))
+    _auth: AuthenticatedUser,
+    Query(params): Query<UserListQuery>,
+) -> Result<Json<PaginatedResponse<UserResponse>>, ServiceError> {
+    const MAX_LIMIT: i64 = 100;
+    const DEFAULT_LIMIT: i64 = 50;
+
+    let limit = params.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
+    let offset = params.offset.unwrap_or(0).max(0);
+
+    let users = state.user_service.find_paginated(limit, offset).await?;
+    Ok(Json(PaginatedResponse {
+        items: users.into_iter().map(UserResponse::from).collect(),
+        limit,
+        offset,
+    }))
 }
 
 /// Retrieves a specific user by ID.

@@ -118,11 +118,15 @@ impl UserRepository {
         .await
     }
 
-    /// Retrieves all users from the database.
+    /// Retrieves a page of active users ordered by creation date (newest first).
+    ///
+    /// # Arguments
+    /// * `limit`  - Maximum number of rows to return
+    /// * `offset` - Number of rows to skip
     ///
     /// # Returns
-    /// A vector of all users
-    pub async fn find_all(&self) -> Result<Vec<User>, sqlx::Error> {
+    /// A vector of users for the requested page
+    pub async fn find_paginated(&self, limit: i64, offset: i64) -> Result<Vec<User>, sqlx::Error> {
         sqlx::query_as!(
             User,
             r#"
@@ -130,7 +134,10 @@ impl UserRepository {
             FROM users
             WHERE is_active = TRUE
             ORDER BY created_at DESC
+            LIMIT $1 OFFSET $2
             "#,
+            limit,
+            offset,
         )
         .fetch_all(&self.pool)
         .await
