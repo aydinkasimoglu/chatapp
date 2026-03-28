@@ -23,3 +23,5 @@ jsonwebtoken = { version = "10.3.0", features = ["rust_crypto"] }
 chrono = { version = "0.4", features = ["serde"] }
 argon2 = "0.5.3"
 async-trait = "0.1.89"
+sha2 = "0.10"
+hex = "0.4"

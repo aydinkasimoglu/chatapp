@@ -15,7 +15,7 @@ use tokio::{net::TcpListener, sync::Mutex};
 use crate::{
     repositories::{
         blocks::BlockRepository, friendship::FriendshipRepository, presence::PresenceRepository,
-        server::ServerRepository, user::UserRepository,
+        refresh_token::RefreshTokenRepository, server::ServerRepository, user::UserRepository,
     },
     services::{
         auth::AuthService, blocks::BlockService, friendship::FriendshipService,
@@ -64,14 +64,17 @@ async fn main() {
         .await
         .expect("Failed to connect to Postgres");
 
+    AuthService::install_crypto_provider();
+
     let user_repository = UserRepository::new(pool.clone());
     let server_repository = ServerRepository::new(pool.clone());
     let friendship_repository = FriendshipRepository::new(pool.clone());
     let presence_repository = PresenceRepository::new(pool.clone());
-    let block_repository = BlockRepository::new(pool);
+    let block_repository = BlockRepository::new(pool.clone());
+    let refresh_token_repository = RefreshTokenRepository::new(pool);
 
     let shared_state = AppState {
-        auth_service: AuthService::new(user_repository.clone(), jwt_secret),
+        auth_service: AuthService::new(user_repository.clone(), refresh_token_repository.clone(), jwt_secret),
         user_service: UserService::new(user_repository.clone()),
         server_service: ServerService::new(server_repository),
         friendship_service: FriendshipService::new(
@@ -93,6 +96,18 @@ async fn main() {
             interval.tick().await;
             if let Err(e) = cleanup_presence.cleanup_stale().await {
                 eprintln!("Presence cleanup error: {:?}", e);
+            }
+        }
+    });
+
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_hours(24));
+        loop {
+            interval.tick().await;
+            match refresh_token_repository.delete_all_expired().await {
+                Ok(n) if n > 0 => println!("Expired token cleanup: removed {} rows", n),
+                Err(e) => eprintln!("Expired token cleanup error: {:?}", e),
+                _ => {}
             }
         }
     });

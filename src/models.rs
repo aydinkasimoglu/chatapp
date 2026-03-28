@@ -307,9 +307,36 @@ impl From<PendingFriendRequestRecord> for PendingFriendRequestResponse {
     }
 }
 
+#[derive(Debug, Clone, FromRow)]
+pub struct RefreshToken {
+    pub token_id: Uuid,
+    pub user_id:  Uuid,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RefreshRequest {
+    pub refresh_token: String,
+}
+
 #[derive(Debug, Serialize)]
 pub struct AuthResponse {
-    pub token: String,
+    /// Short-lived JWT (15 minutes).
+    pub access_token: String,
+    /// Opaque token used to obtain a new access token.
+    pub refresh_token: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UserListQuery {
+    pub limit: Option<i64>,
+    pub offset: Option<i64>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PaginatedResponse<T: Serialize> {
+    pub items: Vec<T>,
+    pub limit: i64,
+    pub offset: i64,
 }
 
 #[derive(Debug, Serialize)]
