@@ -16,14 +16,14 @@ impl PresenceRepository {
     /// Inserts a new session row when a WebSocket connection is established.
     /// Returns the DB-generated session UUID.
     pub async fn connect(&self, user_id: Uuid) -> Result<Uuid, sqlx::Error> {
-        let row = sqlx::query_scalar::<_, Uuid>(
+        let row: Uuid = sqlx::query_scalar!(
             r#"
             INSERT INTO user_presence (user_id, status, last_heartbeat_at, connected_at)
             VALUES ($1, 'online', NOW(), NOW())
             RETURNING session_id
             "#,
+            user_id
         )
-        .bind(user_id)
         .fetch_one(&self.pool)
         .await?;
         Ok(row)
@@ -35,16 +35,16 @@ impl PresenceRepository {
         session_id: Uuid,
         status: PresenceStatus,
     ) -> Result<(), sqlx::Error> {
-        sqlx::query(
+        sqlx::query!(
             r#"
             UPDATE user_presence
             SET last_heartbeat_at = NOW(),
-                status = $2
+                status = $2::presence_status
             WHERE session_id = $1
             "#,
+            session_id,
+            status as _
         )
-        .bind(session_id)
-        .bind(status)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -52,8 +52,7 @@ impl PresenceRepository {
 
     /// Removes a session row on clean WebSocket disconnect.
     pub async fn disconnect(&self, session_id: Uuid) -> Result<(), sqlx::Error> {
-        sqlx::query("DELETE FROM user_presence WHERE session_id = $1")
-            .bind(session_id)
+        sqlx::query!("DELETE FROM user_presence WHERE session_id = $1", session_id)
             .execute(&self.pool)
             .await?;
         Ok(())
@@ -62,7 +61,7 @@ impl PresenceRepository {
     /// Deletes all sessions whose heartbeat is older than 60 seconds.
     /// Call this periodically from a background task to handle crashed clients.
     pub async fn cleanup_stale(&self) -> Result<u64, sqlx::Error> {
-        let result = sqlx::query(
+        let result = sqlx::query!(
             "DELETE FROM user_presence WHERE last_heartbeat_at < NOW() - INTERVAL '60 seconds'",
         )
         .execute(&self.pool)
@@ -79,7 +78,7 @@ impl PresenceRepository {
         &self,
         user_id: Uuid,
     ) -> Result<Vec<OnlineFriendRecord>, sqlx::Error> {
-        sqlx::query_as::<_, OnlineFriendRecord>(
+        sqlx::query!(
             r#"
             WITH my_friends AS (
                 SELECT
@@ -94,8 +93,8 @@ impl PresenceRepository {
             SELECT
                 u.user_id,
                 u.username,
-                MAX(p.last_heartbeat_at)                                                              AS last_heartbeat_at,
-                CASE WHEN bool_or(p.status = 'online') THEN 'online' ELSE 'idle' END::presence_status AS status
+                MAX(p.last_heartbeat_at) AS last_heartbeat_at,
+                CASE WHEN bool_or(p.status = 'online') THEN 'online' ELSE 'idle' END AS status
             FROM my_friends mf
             JOIN users         u ON u.user_id  = mf.friend_id
             JOIN user_presence p ON p.user_id  = u.user_id
@@ -103,9 +102,23 @@ impl PresenceRepository {
             GROUP BY u.user_id, u.username
             ORDER BY u.username
             "#,
+            user_id
         )
-        .bind(user_id)
         .fetch_all(&self.pool)
         .await
+        .map(|rows| {
+            rows.into_iter()
+                .map(|row| OnlineFriendRecord {
+                    user_id: row.user_id,
+                    username: row.username,
+                    last_heartbeat_at: row.last_heartbeat_at.unwrap_or_default(),
+                    status: match row.status.as_deref() {
+                        Some("online") => PresenceStatus::Online,
+                        Some("idle") => PresenceStatus::Idle,
+                        _ => PresenceStatus::Idle,
+                    },
+                })
+                .collect::<Vec<_>>()
+        })
     }
 }
