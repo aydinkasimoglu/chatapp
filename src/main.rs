@@ -85,13 +85,14 @@ async fn main() {
         block_service: BlockService::new(block_repository, friendship_repository, user_repository),
         presence_service: PresenceService::new(presence_repository.clone()),
         rooms: Arc::new(Mutex::new(HashMap::new())),
+        presence_tx: Arc::new(Mutex::new(HashMap::new())),
     };
 
-    // Background task: evict stale presence sessions every 30 seconds.
+    // Background task: evict stale presence sessions every 15 seconds.
     // This handles clients that crash without sending a clean disconnect.
     let cleanup_presence = PresenceService::new(presence_repository);
     tokio::spawn(async move {
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(15));
         loop {
             interval.tick().await;
             if let Err(e) = cleanup_presence.cleanup_stale().await {

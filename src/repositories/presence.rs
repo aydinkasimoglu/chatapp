@@ -58,11 +58,11 @@ impl PresenceRepository {
         Ok(())
     }
 
-    /// Deletes all sessions whose heartbeat is older than 60 seconds.
+    /// Deletes all sessions whose heartbeat is older than 30 seconds.
     /// Call this periodically from a background task to handle crashed clients.
     pub async fn cleanup_stale(&self) -> Result<u64, sqlx::Error> {
         let result = sqlx::query!(
-            "DELETE FROM user_presence WHERE last_heartbeat_at < NOW() - INTERVAL '60 seconds'",
+            "DELETE FROM user_presence WHERE last_heartbeat_at < NOW() - INTERVAL '30 seconds'",
         )
         .execute(&self.pool)
         .await?;
@@ -98,7 +98,7 @@ impl PresenceRepository {
             FROM my_friends mf
             JOIN users         u ON u.user_id  = mf.friend_id
             JOIN user_presence p ON p.user_id  = u.user_id
-            WHERE p.last_heartbeat_at >= NOW() - INTERVAL '60 seconds'
+            WHERE p.last_heartbeat_at >= NOW() - INTERVAL '30 seconds'
             GROUP BY u.user_id, u.username
             ORDER BY u.username
             "#,
@@ -120,5 +120,16 @@ impl PresenceRepository {
                 })
                 .collect::<Vec<_>>()
         })
+    }
+
+    /// Returns `true` if `user_id` has at least one active session.
+    pub async fn has_active_sessions(&self, user_id: Uuid) -> Result<bool, sqlx::Error> {
+        let count = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM user_presence WHERE user_id = $1",
+        )
+        .bind(user_id)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(count > 0)
     }
 }

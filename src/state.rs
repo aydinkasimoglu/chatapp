@@ -1,6 +1,7 @@
 use axum::extract::FromRef;
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::{Mutex, broadcast};
+use uuid::Uuid;
 
 use crate::services::{
     auth::AuthService, blocks::BlockService, friendship::FriendshipService,
@@ -16,6 +17,7 @@ pub struct AppState {
     pub block_service:      BlockService,
     pub presence_service:   PresenceService,
     pub rooms: Arc<Mutex<HashMap<String, broadcast::Sender<String>>>>,
+    pub presence_tx: Arc<Mutex<HashMap<Uuid, broadcast::Sender<String>>>>,
 }
 
 impl FromRef<AppState> for AuthService {

@@ -54,4 +54,9 @@ impl PresenceService {
         let records = self.repository.online_friends(user_id).await?;
         Ok(records.into_iter().map(OnlineFriendResponse::from).collect())
     }
+
+    /// Returns `true` if `user_id` has at least one active presence session.
+    pub async fn is_online(&self, user_id: Uuid) -> Result<bool, ServiceError> {
+        Ok(self.repository.has_active_sessions(user_id).await?)
+    }
 }
