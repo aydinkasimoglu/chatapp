@@ -15,7 +15,7 @@ use crate::{
     state::AppState,
 };
 
-/// Sends a new friend request from the authenticated user to `addressee_id`.
+/// Sends a new friend request from the authenticated user to the given username.
 ///
 /// Returns HTTP 201 Created and the resulting friendship row in `pending` status.
 pub async fn send_friend_request_handler(
@@ -25,7 +25,7 @@ pub async fn send_friend_request_handler(
 ) -> Result<(StatusCode, Json<FriendshipResponse>), ServiceError> {
     let friendship = state
         .friendship_service
-        .send_request(user_id, payload.addressee_id)
+        .send_request(user_id, &payload.username)
         .await?;
 
     Ok((StatusCode::CREATED, Json(friendship)))

@@ -142,7 +142,7 @@ pub struct AuthRequest {
 #[derive(Debug, Deserialize)]
 /// Payload for sending a friend request.
 pub struct FriendRequestPayload {
-    pub addressee_id: Uuid,
+    pub username: String,
 }
 
 // =============================================================

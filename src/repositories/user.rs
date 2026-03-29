@@ -97,6 +97,21 @@ impl UserRepository {
         .await
     }
 
+    /// Retrieves an active user by username.
+    pub async fn find_active_by_username(&self, username: &str) -> Result<Option<User>, sqlx::Error> {
+        sqlx::query_as!(
+            User,
+            r#"
+            SELECT user_id, username, email, password_hash, created_at, updated_at
+            FROM users
+            WHERE username = $1 AND is_active = TRUE
+            "#,
+            username
+        )
+        .fetch_optional(&self.pool)
+        .await
+    }
+
     /// Retrieves a user by email address.
     ///
     /// # Arguments

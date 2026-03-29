@@ -33,25 +33,28 @@ impl FriendshipService {
         }
     }
 
-    /// Sends a new friend request from `requester_id` to `addressee_id`.
+    /// Sends a new friend request from `requester_id` to the user with the given username.
     ///
     /// If the pair previously had a rejected request, that row is reopened as
     /// a new pending request.
     pub async fn send_request(
         &self,
         requester_id: Uuid,
-        addressee_id: Uuid,
+        addressee_username: &str,
     ) -> Result<FriendshipResponse, ServiceError> {
+        let addressee = self
+            .user_repository
+            .find_active_by_username(addressee_username)
+            .await?
+            .ok_or(ServiceError::NotFound)?;
+
+        let addressee_id = addressee.user_id;
+
         if requester_id == addressee_id {
             return Err(ServiceError::ValidationError(
                 "You cannot send a friend request to yourself".to_string(),
             ));
         }
-
-        self.user_repository
-            .find_active_by_id(addressee_id)
-            .await?
-            .ok_or(ServiceError::NotFound)?;
 
         if self
             .block_repository
