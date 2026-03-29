@@ -32,6 +32,20 @@ impl UserService {
     /// # Returns
     /// The created user on success, or a `ServiceError` (e.g., `DuplicateUser` if username/email exists)
     pub async fn create(&self, payload: CreateUser) -> Result<User, ServiceError> {
+        let byte_len = payload.password.len();
+        let char_len = payload.password.chars().count();
+
+        if char_len < 8 {
+            return Err(ServiceError::ValidationError(
+                "Password must be at least 8 characters".to_string(),
+            ));
+        }
+        if byte_len > 128 {
+            return Err(ServiceError::ValidationError(
+                "Password must not exceed 128 bytes".to_string(),
+            ));
+        }
+
         self.repository
             .create(&payload)
             .await
