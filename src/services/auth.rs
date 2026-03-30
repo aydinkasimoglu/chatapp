@@ -245,4 +245,12 @@ impl AuthService {
             ServiceError::JWTGenFailed
         })
     }
+
+    /// Deletes all expired refresh tokens across every user.
+    ///
+    /// Intended to be called from a periodic background task. Returns the
+    /// number of rows removed.
+    pub async fn delete_expired_refresh_tokens(&self) -> Result<u64, ServiceError> {
+        Ok(self.refresh_repository.delete_all_expired().await?)
+    }
 }

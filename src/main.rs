@@ -9,8 +9,8 @@ mod state;
 
 use axum::Router;
 use sqlx::postgres::PgPoolOptions;
-use std::{collections::HashMap, net::SocketAddr, sync::Arc};
-use tokio::{net::TcpListener, sync::Mutex};
+use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration};
+use tokio::{net::TcpListener, sync::Mutex, time::Instant};
 
 use crate::{
     repositories::{
@@ -58,6 +58,9 @@ async fn main() {
     let db_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
     let jwt_secret = std::env::var("JWT_SECRET").expect("JWT_SECRET must be set");
 
+    const PRESENCE_CLEANUP_PERIOD: Duration = Duration::from_secs(15);
+    const REFRESH_TOKEN_CLEANUP_PERIOD: Duration = Duration::from_hours(24);
+
     let pool = PgPoolOptions::new()
         .max_connections(5)
         .connect(&db_url)
@@ -74,7 +77,11 @@ async fn main() {
     let refresh_token_repository = RefreshTokenRepository::new(pool);
 
     let shared_state = AppState {
-        auth_service: AuthService::new(user_repository.clone(), refresh_token_repository.clone(), jwt_secret),
+        auth_service: AuthService::new(
+            user_repository.clone(),
+            refresh_token_repository.clone(),
+            jwt_secret,
+        ),
         user_service: UserService::new(user_repository.clone()),
         server_service: ServerService::new(server_repository),
         friendship_service: FriendshipService::new(
@@ -88,24 +95,35 @@ async fn main() {
         presence_tx: Arc::new(Mutex::new(HashMap::new())),
     };
 
-    // Background task: evict stale presence sessions every 15 seconds.
+    // Evict stale presence sessions every 15 seconds.
     // This handles clients that crash without sending a clean disconnect.
-    let cleanup_presence = PresenceService::new(presence_repository);
-    tokio::spawn(async move {
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(15));
+    let cleanup_presence_service = shared_state.presence_service.clone();
+    let cleanup_presence_handle = tokio::spawn(async move {
+        let mut interval = tokio::time::interval_at(
+            Instant::now() + PRESENCE_CLEANUP_PERIOD,
+            PRESENCE_CLEANUP_PERIOD,
+        );
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
         loop {
             interval.tick().await;
-            if let Err(e) = cleanup_presence.cleanup_stale().await {
+            if let Err(e) = cleanup_presence_service.cleanup_stale().await {
                 eprintln!("Presence cleanup error: {:?}", e);
             }
         }
     });
 
-    tokio::spawn(async move {
-        let mut interval = tokio::time::interval(std::time::Duration::from_hours(24));
+    let cleanup_auth_service = shared_state.auth_service.clone();
+    let cleanup_refresh_token_handle = tokio::spawn(async move {
+        let mut interval = tokio::time::interval_at(
+            Instant::now() + REFRESH_TOKEN_CLEANUP_PERIOD,
+            REFRESH_TOKEN_CLEANUP_PERIOD,
+        );
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
         loop {
             interval.tick().await;
-            match refresh_token_repository.delete_all_expired().await {
+            match cleanup_auth_service.delete_expired_refresh_tokens().await {
                 Ok(n) if n > 0 => println!("Expired token cleanup: removed {} rows", n),
                 Err(e) => eprintln!("Expired token cleanup error: {:?}", e),
                 _ => {}
@@ -127,5 +145,40 @@ async fn main() {
 
     let listener = TcpListener::bind(&addr).await.unwrap();
 
-    axum::serve(listener, app).await.unwrap();
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
+        .await
+        .unwrap();
+
+    println!("Shutting down background tasks...");
+    cleanup_presence_handle.abort();
+    cleanup_refresh_token_handle.abort();
+    let _ = tokio::join!(cleanup_presence_handle, cleanup_refresh_token_handle);
+    println!("Shutdown complete.");
+}
+
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        tokio::signal::ctrl_c()
+            .await
+            .expect("failed to install Ctrl+C handler");
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("failed to install SIGTERM handler")
+            .recv()
+            .await;
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => {},
+        _ = terminate => {},
+    }
+
+    println!("Shutdown signal received");
 }
