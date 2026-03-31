@@ -7,93 +7,51 @@ mod routes;
 mod services;
 mod state;
 
-use axum::Router;
+use axum::{Router, middleware, extract::Request, response::Response};
 use sqlx::postgres::PgPoolOptions;
-use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration};
-use tokio::{net::TcpListener, sync::Mutex, time::Instant};
+use std::{net::SocketAddr, time::Duration};
+use tokio::{net::TcpListener, time::Instant};
+use tracing::{error, info, warn};
 
-use crate::{
-    repositories::{
-        blocks::BlockRepository, friendship::FriendshipRepository, presence::PresenceRepository,
-        refresh_token::RefreshTokenRepository, server::ServerRepository, user::UserRepository,
-    },
-    services::{
-        auth::AuthService, blocks::BlockService, friendship::FriendshipService,
-        presence::PresenceService, server::ServerService, user::UserService,
-    },
-    state::AppState,
-};
+use crate::state::AppState;
 
 /// Entry point for the chat application server.
 ///
 /// Initializes the database connection, sets up services, configures routes,
-/// and starts an HTTP server listening on localhost:3000.
+/// and starts an HTTP server.
 ///
 /// # Environment Variables
 /// - `DATABASE_URL`: PostgreSQL connection string (required)
 /// - `JWT_SECRET`: Secret key for JWT token signing (required)
-///
-/// # Routes
-/// - `POST /login`: User login endpoint
-/// - `POST /signup`: User registration endpoint
-/// - `GET /users`: Get all users
-/// - `GET /users/{user_id}`: Get user by ID
-/// - `PUT /users/{user_id}`: Update user (username/email)
-/// - `PUT /users/{user_id}/password`: Update user password
-/// - `DELETE /users/{user_id}`: Deactivate user
-/// - `POST /friends/requests`: Send a friend request
-/// - `GET /friends`: List accepted friends for the authenticated user
-/// - `GET /friends/requests/incoming`: List pending incoming requests
-/// - `GET /friends/requests/outgoing`: List pending outgoing requests
-/// - `PUT /friends/requests/{friendship_id}/accept`: Accept a friend request
-/// - `PUT /friends/requests/{friendship_id}/reject`: Reject a friend request
-/// - `DELETE /friends/requests/{friendship_id}/cancel`: Cancel an outgoing pending request
-/// - `DELETE /friends/{friendship_id}`: Remove an accepted friendship
-/// - `POST /blocks/{target_user_id}`: Block a user
-/// - `DELETE /blocks/{target_user_id}`: Unblock a user
-/// - `GET /blocks`: List blocked users for the authenticated user
-/// - `GET /ws/{room_name}`: WebSocket connection for chat rooms
+/// - `HOST`: Bind address (default: `0.0.0.0`)
+/// - `PORT`: Listen port (default: `3000`)
+/// - `DB_MAX_CONNECTIONS`: Maximum database pool connections (default: `20`)
+/// - `RUST_LOG`: Tracing filter directive (default: `info`)
 #[tokio::main]
 async fn main() {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .init();
+
     let db_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
     let jwt_secret = std::env::var("JWT_SECRET").expect("JWT_SECRET must be set");
+    let host = std::env::var("HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
+    let port: u16 = parse_env_or("PORT", 3000);
+    let db_max_connections: u32 = parse_env_or("DB_MAX_CONNECTIONS", 20);
 
     const PRESENCE_CLEANUP_PERIOD: Duration = Duration::from_secs(15);
     const REFRESH_TOKEN_CLEANUP_PERIOD: Duration = Duration::from_hours(24);
 
     let pool = PgPoolOptions::new()
-        .max_connections(5)
+        .max_connections(db_max_connections)
         .connect(&db_url)
         .await
         .expect("Failed to connect to Postgres");
 
-    AuthService::install_crypto_provider();
-
-    let user_repository = UserRepository::new(pool.clone());
-    let server_repository = ServerRepository::new(pool.clone());
-    let friendship_repository = FriendshipRepository::new(pool.clone());
-    let presence_repository = PresenceRepository::new(pool.clone());
-    let block_repository = BlockRepository::new(pool.clone());
-    let refresh_token_repository = RefreshTokenRepository::new(pool);
-
-    let shared_state = AppState {
-        auth_service: AuthService::new(
-            user_repository.clone(),
-            refresh_token_repository.clone(),
-            jwt_secret,
-        ),
-        user_service: UserService::new(user_repository.clone()),
-        server_service: ServerService::new(server_repository),
-        friendship_service: FriendshipService::new(
-            friendship_repository.clone(),
-            user_repository.clone(),
-            block_repository.clone(),
-        ),
-        block_service: BlockService::new(block_repository, friendship_repository, user_repository),
-        presence_service: PresenceService::new(presence_repository.clone()),
-        rooms: Arc::new(Mutex::new(HashMap::new())),
-        presence_tx: Arc::new(Mutex::new(HashMap::new())),
-    };
+    let shared_state = AppState::new(pool, jwt_secret);
 
     // Evict stale presence sessions every 15 seconds.
     // This handles clients that crash without sending a clean disconnect.
@@ -108,7 +66,7 @@ async fn main() {
         loop {
             interval.tick().await;
             if let Err(e) = cleanup_presence_service.cleanup_stale().await {
-                eprintln!("Presence cleanup error: {:?}", e);
+                error!("Presence cleanup error: {:?}", e);
             }
         }
     });
@@ -124,8 +82,8 @@ async fn main() {
         loop {
             interval.tick().await;
             match cleanup_auth_service.delete_expired_refresh_tokens().await {
-                Ok(n) if n > 0 => println!("Expired token cleanup: removed {} rows", n),
-                Err(e) => eprintln!("Expired token cleanup error: {:?}", e),
+                Ok(n) if n > 0 => info!("Expired token cleanup: removed {} rows", n),
+                Err(e) => error!("Expired token cleanup error: {:?}", e),
                 _ => {}
             }
         }
@@ -138,23 +96,28 @@ async fn main() {
         .nest("/friends", routes::friends::router())
         .nest("/blocks", routes::blocks::router())
         .nest("/ws", routes::websocket::router())
+        .layer(middleware::from_fn(log_request))
         .with_state(shared_state);
 
-    let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
-    println!("Server listening on {}", addr);
+    let addr: SocketAddr = format!("{}:{}", host, port)
+        .parse()
+        .expect("Invalid HOST or PORT");
+    info!("Server listening on {}", addr);
 
-    let listener = TcpListener::bind(&addr).await.unwrap();
+    let listener = TcpListener::bind(&addr)
+        .await
+        .expect("Failed to bind to address");
 
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
         .await
-        .unwrap();
+        .expect("Server error");
 
-    println!("Shutting down background tasks...");
+    info!("Shutting down background tasks...");
     cleanup_presence_handle.abort();
     cleanup_refresh_token_handle.abort();
     let _ = tokio::join!(cleanup_presence_handle, cleanup_refresh_token_handle);
-    println!("Shutdown complete.");
+    info!("Shutdown complete.");
 }
 
 async fn shutdown_signal() {
@@ -180,5 +143,29 @@ async fn shutdown_signal() {
         _ = terminate => {},
     }
 
-    println!("Shutdown signal received");
+    info!("Shutdown signal received");
+}
+
+async fn log_request(req: Request, next: middleware::Next) -> Response {
+    let method = req.method().clone();
+    let uri = req.uri().clone();
+    let start = Instant::now();
+    let response = next.run(req).await;
+    info!("{} {} {} {:.2?}", method, response.status(), uri, start.elapsed());
+    response
+}
+
+/// Parse an environment variable into `T`, warning and falling back to `default`
+/// if the variable is set but contains an invalid value.
+fn parse_env_or<T: std::str::FromStr>(key: &str, default: T) -> T {
+    match std::env::var(key) {
+        Ok(val) => match val.parse() {
+            Ok(parsed) => parsed,
+            Err(_) => {
+                warn!("{key}={val:?} is not valid, falling back to default");
+                default
+            }
+        },
+        Err(_) => default,
+    }
 }
