@@ -26,7 +26,7 @@ use uuid::Uuid;
 /// The updated user on success
 pub async fn update_user_handler(
     State(state): State<AppState>,
-    Path(user_id): Path<Uuid>,
+    AuthenticatedUser { user_id }: AuthenticatedUser,
     Json(payload): Json<UpdateUser>,
 ) -> Result<Json<UserResponse>, ServiceError> {
     let user = state.user_service.update(user_id, payload).await?;
@@ -46,7 +46,7 @@ pub async fn update_user_handler(
 /// HTTP 204 No Content on success
 pub async fn deactivate_user_handler(
     State(state): State<AppState>,
-    Path(user_id): Path<Uuid>,
+    AuthenticatedUser { user_id }: AuthenticatedUser,
 ) -> Result<StatusCode, ServiceError> {
     state.user_service.deactivate(user_id).await?;
     Ok(StatusCode::NO_CONTENT)
@@ -58,7 +58,7 @@ pub async fn deactivate_user_handler(
 /// on success.
 pub async fn update_password_handler(
     State(state): State<AppState>,
-    Path(user_id): Path<Uuid>,
+    AuthenticatedUser { user_id }: AuthenticatedUser,
     Json(payload): Json<UpdatePassword>,
 ) -> Result<StatusCode, ServiceError> {
     state
@@ -103,6 +103,7 @@ pub async fn get_users_handler(
 /// The requested user on success, or NotFound error if user doesn't exist
 pub async fn get_user_by_id_handler(
     State(state): State<AppState>,
+    _auth: AuthenticatedUser,
     path: Result<Path<Uuid>, PathRejection>,
 ) -> Result<Json<UserResponse>, ServiceError> {
     let Path(user_id) = path.map_err(|_| ServiceError::ValidationError(
