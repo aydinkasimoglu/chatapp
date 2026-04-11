@@ -1,19 +1,9 @@
-mod error;
-mod extractors;
-mod handlers;
-mod models;
-mod repositories;
-mod routes;
-mod services;
-mod state;
-
 use axum::{Router, middleware, extract::Request, response::Response};
+use chatapp::{routes, state::AppState};
 use sqlx::postgres::PgPoolOptions;
 use std::{net::SocketAddr, time::Duration};
 use tokio::{net::TcpListener, time::Instant};
 use tracing::{error, info, warn};
-
-use crate::state::AppState;
 
 /// Entry point for the chat application server.
 ///
@@ -36,8 +26,15 @@ async fn main() {
         )
         .init();
 
-    let db_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
-    let jwt_secret = std::env::var("JWT_SECRET").expect("JWT_SECRET must be set");
+    if let Err(error) = run().await {
+        error!(error = ?error, "server startup failed");
+        std::process::exit(1);
+    }
+}
+
+async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let db_url = required_env("DATABASE_URL")?;
+    let jwt_secret = required_env("JWT_SECRET")?;
     let host = std::env::var("HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
     let port: u16 = parse_env_or("PORT", 3000);
     let db_max_connections: u32 = parse_env_or("DB_MAX_CONNECTIONS", 20);
@@ -48,10 +45,9 @@ async fn main() {
     let pool = PgPoolOptions::new()
         .max_connections(db_max_connections)
         .connect(&db_url)
-        .await
-        .expect("Failed to connect to Postgres");
+        .await?;
 
-    let shared_state = AppState::new(pool, jwt_secret);
+    let shared_state = AppState::new(pool, jwt_secret)?;
 
     // Evict stale presence sessions every 15 seconds.
     // This handles clients that crash without sending a clean disconnect.
@@ -91,6 +87,7 @@ async fn main() {
 
     let app = Router::new()
         .merge(routes::auth::router())
+        .merge(routes::dms::router())
         .nest("/users", routes::users::router())
         .nest("/servers", routes::servers::router())
         .nest("/friends", routes::friends::router())
@@ -99,40 +96,41 @@ async fn main() {
         .layer(middleware::from_fn(log_request))
         .with_state(shared_state);
 
-    let addr: SocketAddr = format!("{}:{}", host, port)
-        .parse()
-        .expect("Invalid HOST or PORT");
+    let addr: SocketAddr = format!("{}:{}", host, port).parse()?;
     info!("Server listening on {}", addr);
 
-    let listener = TcpListener::bind(&addr)
-        .await
-        .expect("Failed to bind to address");
+    let listener = TcpListener::bind(&addr).await?;
 
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
-        .await
-        .expect("Server error");
+        .await?;
 
     info!("Shutting down background tasks...");
     cleanup_presence_handle.abort();
     cleanup_refresh_token_handle.abort();
     let _ = tokio::join!(cleanup_presence_handle, cleanup_refresh_token_handle);
     info!("Shutdown complete.");
+
+    Ok(())
 }
 
 async fn shutdown_signal() {
     let ctrl_c = async {
-        tokio::signal::ctrl_c()
-            .await
-            .expect("failed to install Ctrl+C handler");
+        if let Err(error) = tokio::signal::ctrl_c().await {
+            error!(error = ?error, "failed to install Ctrl+C handler");
+        }
     };
 
     #[cfg(unix)]
     let terminate = async {
-        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-            .expect("failed to install SIGTERM handler")
-            .recv()
-            .await;
+        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(mut signal) => {
+                signal.recv().await;
+            }
+            Err(error) => {
+                error!(error = ?error, "failed to install SIGTERM handler");
+            }
+        }
     };
 
     #[cfg(not(unix))]
@@ -144,6 +142,12 @@ async fn shutdown_signal() {
     }
 
     info!("Shutdown signal received");
+}
+
+fn required_env(key: &str) -> Result<String, std::io::Error> {
+    std::env::var(key).map_err(|_| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, format!("{key} must be set"))
+    })
 }
 
 async fn log_request(req: Request, next: middleware::Next) -> Response {

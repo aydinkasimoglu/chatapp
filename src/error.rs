@@ -22,8 +22,10 @@ pub enum ServiceError {
     BlockedRelationship,
     #[error("You have already blocked this user")]
     AlreadyBlocked,
-    #[error("User not found")]
+    #[error("Resource not found")]
     NotFound,
+    #[error("Forbidden")]
+    Forbidden,
     #[error("Unauthorized")]
     Unauthorized,
     #[error("Invalid token")]
@@ -51,6 +53,7 @@ impl IntoResponse for ServiceError {
             }
             ServiceError::AlreadyBlocked => create_error(StatusCode::CONFLICT, self.to_string()),
             ServiceError::NotFound => create_error(StatusCode::NOT_FOUND, self.to_string()),
+            ServiceError::Forbidden => create_error(StatusCode::FORBIDDEN, self.to_string()),
             ServiceError::Unauthorized => create_error(StatusCode::UNAUTHORIZED, self.to_string()),
             ServiceError::InvalidToken => create_error(StatusCode::UNAUTHORIZED, self.to_string()),
             ServiceError::Database(err) => {

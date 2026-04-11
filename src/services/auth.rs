@@ -2,6 +2,7 @@ use argon2::{Argon2, PasswordHash, PasswordVerifier};
 use chrono::Utc;
 use jsonwebtoken::{Algorithm, EncodingKey, Header, Validation, encode};
 use sha2::{Digest, Sha256};
+use std::sync::{Once, OnceLock};
 use uuid::Uuid;
 
 use crate::error::ServiceError;
@@ -14,6 +15,18 @@ const MAX_REFRESH_TOKENS_PER_USER: usize = 10;
 
 /// Lifetime of a refresh token in days.
 const REFRESH_TOKEN_TTL_DAYS: i64 = 30;
+
+static INSTALL_CRYPTO_PROVIDER: Once = Once::new();
+static INSTALL_CRYPTO_PROVIDER_RESULT: OnceLock<Result<(), String>> = OnceLock::new();
+
+/// Initialization errors for `AuthService`.
+#[derive(Debug, thiserror::Error)]
+pub enum AuthServiceInitError {
+    #[error("Failed to install the JWT crypto provider: {0}")]
+    CryptoProvider(String),
+    #[error("JWT secret must be at least 32 bytes long")]
+    JwtSecretTooShort,
+}
 
 /// Service for handling user authentication and JWT token operations.
 ///
@@ -42,13 +55,26 @@ impl AuthService {
     /// will panic, so do not call it inside `AuthService::new`.
     ///
     /// ```rust
+    /// use chatapp::services::auth::AuthService;
+    ///
     /// // in main()
     /// AuthService::install_crypto_provider();
     /// ```
-    pub fn install_crypto_provider() {
-        jsonwebtoken::crypto::rust_crypto::DEFAULT_PROVIDER
-            .install_default()
-            .expect("failed to install default crypto provider");
+    pub fn install_crypto_provider() -> Result<(), AuthServiceInitError> {
+        INSTALL_CRYPTO_PROVIDER.call_once(|| {
+            let result = jsonwebtoken::crypto::rust_crypto::DEFAULT_PROVIDER
+                .install_default()
+                .map_err(|error| format!("{error:?}"));
+            let _ = INSTALL_CRYPTO_PROVIDER_RESULT.set(result.map(|_| ()));
+        });
+
+        match INSTALL_CRYPTO_PROVIDER_RESULT.get() {
+            Some(Ok(())) => Ok(()),
+            Some(Err(message)) => Err(AuthServiceInitError::CryptoProvider(message.clone())),
+            None => Err(AuthServiceInitError::CryptoProvider(
+                "crypto provider initialization did not complete".to_string(),
+            )),
+        }
     }
 
     /// Creates a new `AuthService` instance.
@@ -64,19 +90,18 @@ impl AuthService {
         repository: UserRepository,
         refresh_repository: RefreshTokenRepository,
         jwt_secret: String,
-    ) -> Self {
+    ) -> Result<Self, AuthServiceInitError> {
+        Self::install_crypto_provider()?;
+
         if jwt_secret.as_bytes().len() < 32 {
-            panic!(
-                "JWT secret is too short: {} bytes (need >=32)",
-                jwt_secret.as_bytes().len()
-            );
+            return Err(AuthServiceInitError::JwtSecretTooShort);
         }
 
-        Self {
+        Ok(Self {
             repository,
             refresh_repository,
             jwt_secret,
-        }
+        })
     }
 
     /// Authenticates a user and returns a short-lived access token plus a
@@ -181,7 +206,7 @@ impl AuthService {
         // FIX: Refresh tokens are now long-lived (30 days), not 15 minutes
         let expires_at = Utc::now()
             .checked_add_signed(chrono::Duration::days(REFRESH_TOKEN_TTL_DAYS))
-            .expect("valid timestamp");
+            .ok_or(ServiceError::JWTGenFailed)?;
 
         self.refresh_repository
             .create(user_id, &hash, expires_at)
@@ -227,7 +252,7 @@ impl AuthService {
     pub fn generate_access_token(&self, user_id: Uuid) -> Result<String, ServiceError> {
         let expiration = Utc::now()
             .checked_add_signed(chrono::Duration::minutes(15))
-            .expect("valid timestamp")
+            .ok_or(ServiceError::JWTGenFailed)?
             .timestamp() as usize;
 
         let claims = Claims {

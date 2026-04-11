@@ -38,7 +38,7 @@ impl UserRepository {
         let salt = SaltString::generate(&mut OsRng);
         let password_hash = Argon2::default()
             .hash_password(payload.password.as_bytes(), &salt)
-            .unwrap()
+            .map_err(|error| password_hash_error("failed to hash password", error))?
             .to_string();
 
         sqlx::query_as!(
@@ -218,7 +218,8 @@ impl UserRepository {
         };
 
         // Verify current password
-        let parsed_hash = PasswordHash::new(&row.password_hash).unwrap();
+        let parsed_hash = PasswordHash::new(&row.password_hash)
+            .map_err(|error| password_hash_error("failed to parse password hash", error))?;
         let valid = Argon2::default()
             .verify_password(payload.current_password.as_bytes(), &parsed_hash)
             .is_ok();
@@ -231,7 +232,7 @@ impl UserRepository {
         let salt = SaltString::generate(&mut OsRng);
         let new_hash = Argon2::default()
             .hash_password(payload.new_password.as_bytes(), &salt)
-            .unwrap()
+            .map_err(|error| password_hash_error("failed to hash password", error))?
             .to_string();
 
         sqlx::query!(
@@ -269,4 +270,11 @@ impl UserRepository {
 
         Ok(result.rows_affected() > 0)
     }
+}
+
+fn password_hash_error(
+    context: &str,
+    error: impl std::fmt::Display,
+) -> sqlx::Error {
+    sqlx::Error::Protocol(format!("{context}: {error}").into())
 }

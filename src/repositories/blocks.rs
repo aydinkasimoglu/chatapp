@@ -47,6 +47,7 @@ impl BlockRepository {
     /// Looks up a specific directed block (`blocker_id` → `blocked_id`).
     ///
     /// Returns `None` if no such block exists.
+    #[allow(dead_code)]
     pub async fn find(
         &self,
         blocker_id: Uuid,
