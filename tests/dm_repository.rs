@@ -157,6 +157,45 @@ async fn list_messages_honors_before_cursor() {
 }
 
 #[tokio::test]
+async fn list_messages_skips_soft_deleted_rows() {
+    run_db_test(|database| {
+        Box::pin(async move {
+            let repository = DmRepository::new(database.pool.clone());
+            let alice = insert_user(&database.pool, "alice_repo_skip_deleted").await?;
+            let bob = insert_user(&database.pool, "bob_repo_skip_deleted").await?;
+            let conversation = repository
+                .create_conversation(alice, &[alice, bob], DmConversationKind::Direct, None)
+                .await?;
+
+            let oldest = repository
+                .send_message(conversation.conversation_id, alice, "oldest visible")
+                .await?;
+            let newest_visible = repository
+                .send_message(conversation.conversation_id, bob, "newest visible")
+                .await?;
+            let newest_deleted = repository
+                .send_message(conversation.conversation_id, alice, "deleted newest")
+                .await?;
+
+            repository
+                .soft_delete_message(newest_deleted.message_id)
+                .await?;
+
+            let messages = repository
+                .list_messages(conversation.conversation_id, None, 2)
+                .await?;
+
+            assert_eq!(messages.len(), 2);
+            assert_eq!(messages[0].message_id, newest_visible.message_id);
+            assert_eq!(messages[1].message_id, oldest.message_id);
+            assert!(messages.iter().all(|message| message.deleted_at.is_none()));
+            Ok::<(), BoxError>(())
+        })
+    })
+    .await;
+}
+
+#[tokio::test]
 async fn mark_as_read_updates_the_member_cursor() {
     run_db_test(|database| {
         Box::pin(async move {
@@ -184,7 +223,10 @@ async fn mark_as_read_updates_the_member_cursor() {
                 })?;
 
             assert!(updated);
-            assert_eq!(bob_membership.last_read_message_id, Some(message.message_id));
+            assert_eq!(
+                bob_membership.last_read_message_id,
+                Some(message.message_id)
+            );
             assert!(bob_membership.last_read_at.is_some());
             Ok::<(), BoxError>(())
         })
@@ -211,10 +253,7 @@ async fn soft_delete_message_sets_deleted_at() {
                 .find_message_by_id(message.message_id)
                 .await?
                 .ok_or_else(|| {
-                    std::io::Error::new(
-                        std::io::ErrorKind::NotFound,
-                        "deleted message missing",
-                    )
+                    std::io::Error::new(std::io::ErrorKind::NotFound, "deleted message missing")
                 })?;
 
             assert!(deleted);

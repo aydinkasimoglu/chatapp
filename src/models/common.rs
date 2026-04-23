@@ -8,6 +8,7 @@ pub struct CursorPaginatedResponse<T: Serialize> {
     pub limit: i64,
     pub before_message_id: Option<Uuid>,
     pub next_before_message_id: Option<Uuid>,
+    pub has_older: bool,
 }
 
 #[derive(Debug, Serialize)]

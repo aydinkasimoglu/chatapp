@@ -392,6 +392,7 @@ impl DmRepository {
             FROM dm_messages dm
             JOIN users u ON u.user_id = dm.sender_id
             WHERE dm.conversation_id = $1
+                            AND dm.deleted_at IS NULL
               AND ($2::uuid IS NULL OR dm.message_id < $2)
             ORDER BY dm.message_id DESC
             LIMIT $3

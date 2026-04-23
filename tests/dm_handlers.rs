@@ -16,8 +16,8 @@ use chatapp::{
         send_message_handler,
     },
     models::{
-        CreateDmConversation, DmConversationKind, DmConversationListQuery,
-        DmMessageListQuery, MarkDmConversationRead, SendDmMessage,
+        CreateDmConversation, DmConversationKind, DmConversationListQuery, DmMessageListQuery,
+        MarkDmConversationRead, SendDmMessage,
     },
     repositories::dm::DmRepository,
 };
@@ -290,7 +290,47 @@ async fn list_messages_handler_returns_a_cursor_page() {
 
             assert_eq!(page.items.len(), 1);
             assert_eq!(page.limit, 10);
-            assert!(page.next_before_message_id.is_some());
+            assert!(!page.has_older);
+            assert!(page.next_before_message_id.is_none());
+            Ok::<(), BoxError>(())
+        })
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn list_messages_handler_sets_has_older_when_another_page_exists() {
+    run_db_test(|database| {
+        Box::pin(async move {
+            let state = build_test_state(database.pool.clone())?;
+            let repository = DmRepository::new(database.pool.clone());
+            let alice = insert_user(&database.pool, "alice_handler_list_msg_page").await?;
+            let bob = insert_user(&database.pool, "bob_handler_list_msg_page").await?;
+            let conversation = repository
+                .create_conversation(alice, &[alice, bob], DmConversationKind::Direct, None)
+                .await?;
+            repository
+                .send_message(conversation.conversation_id, alice, "older page item")
+                .await?;
+            let newest = repository
+                .send_message(conversation.conversation_id, bob, "newest page item")
+                .await?;
+
+            let Json(page) = list_messages_handler(
+                State(state),
+                AuthenticatedUser { user_id: alice },
+                Path(conversation.conversation_id),
+                Query(DmMessageListQuery {
+                    limit: Some(1),
+                    before_message_id: None,
+                }),
+            )
+            .await?;
+
+            assert_eq!(page.items.len(), 1);
+            assert!(page.has_older);
+            assert_eq!(page.items[0].message_id, newest.message_id);
+            assert_eq!(page.next_before_message_id, Some(newest.message_id));
             Ok::<(), BoxError>(())
         })
     })

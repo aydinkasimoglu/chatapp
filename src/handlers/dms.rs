@@ -88,17 +88,33 @@ pub async fn list_messages_handler(
     let limit = params.limit.unwrap_or(DEFAULT_LIMIT);
     crate::services::dm::DmService::validate_message_pagination(limit)?;
 
-    let messages = state
+    let mut messages = state
         .dm_service
-        .list_messages(conversation_id, user_id, params.before_message_id, limit)
+        .list_messages(
+            conversation_id,
+            user_id,
+            params.before_message_id,
+            limit + 1,
+        )
         .await?;
-    let next_before_message_id = messages.last().map(|message| message.message_id);
+    let page_limit = limit as usize;
+    let has_older = messages.len() > page_limit;
+    if has_older {
+        messages.truncate(page_limit);
+    }
+
+    let next_before_message_id = if has_older {
+        messages.last().map(|message| message.message_id)
+    } else {
+        None
+    };
 
     Ok(Json(CursorPaginatedResponse {
         items: messages,
         limit,
         before_message_id: params.before_message_id,
         next_before_message_id,
+        has_older,
     }))
 }
 
